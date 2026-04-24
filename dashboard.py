@@ -18,6 +18,10 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 genai.configure(api_key=GEMINI_API_KEY)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
+# --- CHAT MEMORY ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
 # --- DATA ENGINE ---
 @st.cache_data(ttl=5)
 def get_data():
@@ -66,32 +70,116 @@ c4.metric("Ideal CPA", f"₦{int(IDEAL_BUDGET/SOM_VAL):,}")
 
 st.divider()
 
-# --- AI SEARCH ---
-query = st.text_input("Ask Strategy Vault...")
-if query:
-    emb = genai.embed_content(
-        model="models/gemini-embedding-2-preview",
-        content=query,
-        output_dimensionality=768
-    )['embedding']
+# --- QUICK PROMPTS ---
+st.subheader("💡 Quick Questions")
+col1, col2, col3 = st.columns(3)
 
-    res = supabase.rpc('match_memories', {
-        'query_embedding': emb,
-        'match_threshold': 0.3,
-        'match_count': 2
-    }).execute()
+if col1.button("Where should we scale?"):
+    st.session_state.messages.append({"role": "user", "content": "Where should we scale?"})
 
-    if res.data:
-        context = "\n".join([c['content'] for c in res.data])
-        ans = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "Senior strategist."},
-                {"role": "user", "content": f"{context}\n{query}"}
-            ]
-        ).choices[0].message.content
+if col2.button("Are we overspending?"):
+    st.session_state.messages.append({"role": "user", "content": "Analyze our CAC efficiency"})
 
-        st.write(ans)
+if col3.button("How do we hit SOM faster?"):
+    st.session_state.messages.append({"role": "user", "content": "How can we reach our SOM target faster?"})
+
+# --- DISPLAY CHAT ---
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.write(msg["content"])
+
+# --- CHAT INPUT ---
+user_input = st.chat_input("Ask your AI advisor...")
+
+if user_input:
+    st.session_state.messages.append({"role": "user", "content": user_input})
+
+    with st.chat_message("user"):
+        st.write(user_input)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+
+            # Embed query
+            emb = genai.embed_content(
+                model="models/gemini-embedding-2-preview",
+                content=user_input,
+                output_dimensionality=768
+            )['embedding']
+
+            # Retrieve memory
+            res = supabase.rpc('match_memories', {
+                'query_embedding': emb,
+                'match_threshold': 0.3,
+                'match_count': 3
+            }).execute()
+
+            context = "\n".join([c['content'] for c in res.data]) if res.data else ""
+
+            # Inject business metrics
+            metrics = f"""
+Leads: {actual_count}
+SAM: {SAM_VAL}
+SOM: {SOM_VAL}
+Current CAC: {current_cac}
+Budget: {mkt_budget}
+"""
+
+            # Conversation history
+            history = "\n".join([
+                f"{m['role']}: {m['content']}"
+                for m in st.session_state.messages[-6:]
+            ])
+
+            # AI response
+            response = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """You are a strategic AI advisor for Penafort.
+
+Use:
+- Retrieved knowledge
+- Business metrics
+- Conversation history
+
+Rules:
+- Be clear and direct
+- If data is missing, say "Data not available"
+- Give actionable insights
+"""
+                    },
+                    {
+                        "role": "user",
+                        "content": f"""
+CONVERSATION:
+{history}
+
+RETRIEVED CONTEXT:
+{context}
+
+BUSINESS DATA:
+{metrics}
+
+QUESTION:
+{user_input}
+"""
+                    }
+                ],
+                temperature=0.3
+            )
+
+            answer = response.choices[0].message.content
+
+            st.write(answer)
+
+            st.session_state.messages.append({"role": "assistant", "content": answer})
+
+# --- LIMIT MEMORY ---
+st.session_state.messages = st.session_state.messages[-10:]
+
+st.divider()
 
 # --- VISUALS ---
 if not leads_df.empty:
