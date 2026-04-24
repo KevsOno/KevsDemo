@@ -1,7 +1,13 @@
-import os  # Add this to your imports at the top
+import os
+import smtplib
+import pandas as pd
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from supabase import create_client  # <--- CRITICAL LINE
+from groq import Groq
+import google.generativeai as genai
 
 # --- 1. CONFIGURATION & CLIENT SETUP ---
-# os.environ.get() looks for the Secrets you just added to your GitHub Settings
 CREDENTIALS = {
     "SB_URL": os.environ.get('SUPABASE_URL', '').strip().rstrip('/'),
     "SB_KEY": os.environ.get('SUPABASE_KEY'),
@@ -11,11 +17,5 @@ CREDENTIALS = {
     "EMAIL_PASS": os.environ.get('GMAIL_PASS')
 }
 
-# Add a quick check to prevent crashes if a key is missing
-for key, value in CREDENTIALS.items():
-    if not value:
-        print(f"⚠️ Warning: {key} is not set in environment variables.")
-
+# Now this line will work because 'create_client' is defined
 supabase = create_client(CREDENTIALS["SB_URL"], CREDENTIALS["SB_KEY"])
-groq_client = Groq(api_key=CREDENTIALS["GROQ_API"])
-genai.configure(api_key=CREDENTIALS["G_API"])
