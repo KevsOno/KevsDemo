@@ -3,7 +3,7 @@ import smtplib
 import pandas as pd
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from supabase import create_client  # <--- CRITICAL LINE
+from supabase import create_client  # Ensure this is exactly like this
 from groq import Groq
 import google.generativeai as genai
 
@@ -17,5 +17,5 @@ CREDENTIALS = {
     "EMAIL_PASS": os.environ.get('GMAIL_PASS')
 }
 
-# Now this line will work because 'create_client' is defined
+# This will now be defined properly
 supabase = create_client(CREDENTIALS["SB_URL"], CREDENTIALS["SB_KEY"])
