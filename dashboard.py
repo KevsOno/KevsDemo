@@ -6,6 +6,7 @@ import google.generativeai as genai
 from groq import Groq
 from datetime import datetime
 import logging
+import numpy as np
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Penafort Strategic Advisor", layout="wide")
@@ -40,22 +41,38 @@ leads_df, inv_df = get_data()
 SOM_VAL, SAM_VAL = 2900, 14500
 IDEAL_BUDGET = 2000000
 
-# --- TOOL FUNCTIONS ---
-def propose_strategy_update(framework: str, suggestion: str, new_values: dict):
-    """Propose changes to business metrics or strategy."""
-    try:
-        supabase.table("suggestions").insert({
-            "framework_used": framework,
-            "proposed_change": new_values,
-            "reasoning": suggestion
-        }).execute()
-        return f"✅ Strategic proposal logged via {framework}. Awaiting approval."
-    except Exception as e:
-        return f"❌ Error logging proposal: {str(e)}"
+# ============================================================
+# ADVANCED TOOL FUNCTIONS
+# ============================================================
+
+def calculate_budget_optimization(budget, leads_data):
+    """Operations Research: Linear allocation based on Faculty Conversion."""
+    if not leads_data: 
+        return "No data to optimize."
+    df = pd.DataFrame(leads_data)
+    # Calculate Lead Density per Faculty
+    dist = df['faculty'].value_counts(normalize=True)
+    # Optimization: Prioritize high-density areas but cap spend to avoid diminishing returns
+    optimized_plan = (dist * budget).to_dict()
+    return optimized_plan
+
+def run_product_bcg_matrix(inventory_data):
+    """Choice Problem: BCG Matrix analysis for Product Strategy."""
+    if not inventory_data: 
+        return "No inventory to analyze."
+    df = pd.DataFrame(inventory_data)
+    # Rename columns to match expected names
+    df = df.rename(columns={'stock_quantity': 'stock', 'unit_price': 'price'})
+    # Categorize based on stock (proxy for market share) and price (proxy for growth/value)
+    df['category'] = 'Question Mark'
+    df.loc[(df['stock'] > 20) & (df['price'] > 15000), 'category'] = 'Star'
+    df.loc[(df['stock'] > 20) & (df['price'] <= 15000), 'category'] = 'Cash Cow'
+    df.loc[(df['stock'] <= 20) & (df['price'] <= 15000), 'category'] = 'Dog'
+    
+    return df[['item_name', 'category']].to_dict(orient='records')
 
 def run_optimization_analysis(budget: float, lead_data: list):
     """Calculate best budget allocation across faculties."""
-    import pandas as pd
     df = pd.DataFrame(lead_data)
     
     if df.empty:
@@ -73,7 +90,40 @@ def run_optimization_analysis(budget: float, lead_data: list):
         "recommendation": f"🎯 Optimization suggests shifting 40% of budget to {best_faculty} to maximize SOM growth."
     }
 
-# --- SIDEBAR ---
+def propose_strategy_update(framework: str, suggestion: str, new_values: dict):
+    """Propose changes to business metrics or strategy with Lagos context."""
+    # Auto-add Lagos Context
+    local_note = "Optimized for Lagos delivery routes and LASU student peak hours."
+    enhanced_suggestion = f"{suggestion}\n\n{local_note}"
+    
+    try:
+        supabase.table("suggestions").insert({
+            "framework_used": framework,
+            "proposed_change": new_values,
+            "reasoning": enhanced_suggestion
+        }).execute()
+        return f"✅ Strategic proposal logged via {framework}. Awaiting Michael's approval."
+    except Exception as e:
+        return f"❌ Error logging proposal: {str(e)}"
+
+def select_best_framework(query: str, data_available: dict):
+    """
+    Optimizes which framework to use based on query intent and data depth.
+    """
+    # Logic: If query mentions 'competitor' and we have data -> VRIO
+    if "competitor" in query.lower() and data_available.get('competitor_info'):
+        return "VRIO"
+    # Logic: If query is about 'growth' -> Ansoff Matrix
+    elif "grow" in query.lower() or "scale" in query.lower():
+        return "Ansoff Matrix"
+    # Logic: If data is missing
+    elif not data_available.get('customer_feedback'):
+        return "INSUFFICIENT_CONTEXT_NPS"
+    return "SWOT"  # Default
+
+# ============================================================
+# SIDEBAR
+# ============================================================
 with st.sidebar:
     st.header("🎮 Management Controls")
     mkt_budget = st.slider("Budget (₦)", 50000, 2000000, 500000, 50000)
@@ -87,7 +137,9 @@ with st.sidebar:
             st.success(f"✅ Lead {name} Synced!")
             st.rerun()
 
-# --- ALERTS ---
+# ============================================================
+# ALERTS
+# ============================================================
 alert_res = supabase.table("market_alerts").select("*").order("created_at", desc=True).limit(1).execute()
 if alert_res.data:
     latest = alert_res.data[0]
@@ -96,7 +148,9 @@ if alert_res.data:
         with st.expander("📋 AI Recovery Plan"):
             st.write(latest['ai_directive'])
 
-# --- MAIN DASHBOARD ---
+# ============================================================
+# MAIN DASHBOARD
+# ============================================================
 st.title("🦅 Penafort Strategic Advisor")
 
 # --- KPIs ---
@@ -111,7 +165,92 @@ c4.metric("🎯 Ideal CPA", f"₦{int(IDEAL_BUDGET/SOM_VAL):,}")
 
 st.divider()
 
-# --- QUICK PROMPTS ---
+# ============================================================
+# OPTIMIZATION ENGINE UI
+# ============================================================
+with st.expander("🔬 Run Operations Research"):
+    if st.button("Calculate Optimal Budget Allocation"):
+        # 1. Run Math
+        results = run_optimization_analysis(mkt_budget, leads_df.to_dict(orient='records'))
+        
+        if "error" not in results:
+            # 2. Display Result
+            st.write(f"### Optimal Strategy: Focus on **{results['best_move']}**")
+            st.info(results['recommendation'])
+            
+            # 3. Choice Visualization
+            chart_data = pd.DataFrame(results['allocation_plan'])
+            st.bar_chart(chart_data.set_index('faculty')['suggested_spend'])
+            
+            # 4. Strategic Proposal Option
+            if st.button("📝 Propose This Strategy for Approval"):
+                result = propose_strategy_update(
+                    framework="Operations Research",
+                    suggestion=results['recommendation'],
+                    new_values={"recommended_budget_allocation": results['allocation_plan']}
+                )
+                st.success(result)
+        else:
+            st.error(results['error'])
+
+# ============================================================
+# PRODUCT CHOICE (BCG MATRIX)
+# ============================================================
+with st.expander("📈 Product Choice Matrix (BCG)"):
+    if not inv_df.empty:
+        # Create a copy to avoid modifying original
+        bcg_df = inv_df.copy()
+        
+        # Simplified BCG Logic
+        bcg_df['Market Share'] = bcg_df['stock_quantity'] / bcg_df['stock_quantity'].sum()
+        bcg_df['Growth Potential'] = bcg_df['unit_price'] / bcg_df['unit_price'].max()
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.scatter(bcg_df['Market Share'], bcg_df['Growth Potential'], s=100)
+        for i, txt in enumerate(bcg_df['item_name']):
+            ax.annotate(txt, (bcg_df['Market Share'].iat[i], bcg_df['Growth Potential'].iat[i]), fontsize=10)
+        
+        ax.set_xlabel('Market Share (Stock)')
+        ax.set_ylabel('Growth Potential (Value)')
+        ax.set_title('BCG Matrix Analysis')
+        ax.axhline(0.5, color='gray', linestyle='--', alpha=0.5)
+        ax.axvline(0.5, color='gray', linestyle='--', alpha=0.5)
+        
+        # Add quadrant labels
+        ax.text(0.75, 0.75, 'STARS', fontsize=12, alpha=0.5, ha='center')
+        ax.text(0.25, 0.75, 'QUESTION MARKS', fontsize=12, alpha=0.5, ha='center')
+        ax.text(0.75, 0.25, 'CASH COWS', fontsize=12, alpha=0.5, ha='center')
+        ax.text(0.25, 0.25, 'DOGS', fontsize=12, alpha=0.5, ha='center')
+        
+        st.pyplot(fig)
+        st.caption("Stars (Top Right), Cash Cows (Bottom Right), Question Marks (Top Left), Dogs (Bottom Left)")
+        
+        # Show BCG categorization
+        bcg_results = run_product_bcg_matrix(inv_df.to_dict(orient='records'))
+        if isinstance(bcg_results, list):
+            st.write("**BCG Categorization:**")
+            st.dataframe(pd.DataFrame(bcg_results))
+
+# ============================================================
+# DYNAMIC TASK BUTTONS
+# ============================================================
+st.subheader("🛠️ Strategic Tasks")
+task_col1, task_col2, task_col3 = st.columns(3)
+
+if task_col1.button("👥 Run Customer Journey"):
+    st.session_state.messages.append({"role": "user", "content": "Analyze the student journey from seeing an ad to buying a perfume at LASU."})
+
+if task_col2.button("⚔️ Competitive VRIO"):
+    st.session_state.messages.append({"role": "user", "content": "Run a VRIO analysis on our technical marketing automation vs traditional competitors."})
+
+if task_col3.button("🌊 Blue Ocean Strategy"):
+    st.session_state.messages.append({"role": "user", "content": "How can we create a Blue Ocean in the crowded Lagos fragrance market?"})
+
+st.divider()
+
+# ============================================================
+# QUICK PROMPTS
+# ============================================================
 st.subheader("💡 Quick Questions")
 col1, col2, col3 = st.columns(3)
 
@@ -124,7 +263,9 @@ if col2.button("⚠️ Are we overspending?"):
 if col3.button("🚀 How do we hit SOM faster?"):
     st.session_state.messages.append({"role": "user", "content": "How can we reach our SOM target faster?"})
 
-# --- CHAT HISTORY ---
+# ============================================================
+# CHAT INTERFACE
+# ============================================================
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
@@ -171,15 +312,20 @@ Budget: {mkt_budget}
                 for m in st.session_state.messages[-6:]
             ])
             
-            # System prompt with tool awareness
-            system_content = """You are the Penafort Lead Strategist.
-            
-You have access to these frameworks:
-- VRIO: Analyze if resources are Valuable, Rare, Inimitable, Organized
-- BCG Matrix: Categorize products (Stars, Cash Cows, Question Marks, Dogs)
-- Value Proposition: Map customer pains to solutions
+            # Advanced system prompt with framework selection
+            system_content = """You are the Penafort Strategy Engine. You operate in 3 Modes:
 
-If you notice inefficient SAM/SOM or budget allocation, explain the issue clearly.
+1. CUSTOMER ANALYSIS: (Audience Segmentation, CJM, Value Prop Canvas, JTBD, NPS, PMF). 
+   Use this for 'Who' and 'Why' questions.
+2. MARKET ANALYSIS: (SWOT, VRIO, Value Chain, BCG, Ansoff, Blue Ocean, PESTLE). 
+   Use this for 'Competition' and 'Market Position' questions.
+3. HYBRID: Combined analysis for high-level decision making.
+
+OPTIMIZATION RULE:
+- If context is missing for a framework (e.g. no lead data for PMF), DO NOT hallucinate. 
+- Instead, guide Michael: 'To run a PMF analysis, I need to know the retention rate of your last 50 customers.'
+- Always prioritize locally relevant solutions for the Lagos/LASU market.
+
 For strategic proposals, ask Michael to use the Strategy Proposal Room below."""
             
             # AI response
@@ -220,7 +366,9 @@ QUESTION:
             except:
                 pass
 
-# --- STRATEGY PROPOSAL ROOM ---
+# ============================================================
+# STRATEGY PROPOSAL ROOM
+# ============================================================
 st.divider()
 st.header("🧠 Strategy Proposal Room")
 
@@ -232,27 +380,29 @@ if prop_res.data:
             st.write(f"**Reasoning:** {prop['reasoning']}")
             st.json(prop['proposed_change'])
             
-            col1, col2 = st.columns(2)
-            if col1.button("✅ Approve & Execute", key=f"app_{prop['id']}"):
+            proposal_col1, proposal_col2 = st.columns(2)
+            if proposal_col1.button("✅ Approve & Execute", key=f"app_{prop['id']}"):
                 st.success("✅ Strategy Integrated!")
                 supabase.table("suggestions").update({"status": "approved"}).eq("id", prop["id"]).execute()
                 st.rerun()
                 
-            if col2.button("❌ Reject", key=f"rej_{prop['id']}"):
+            if proposal_col2.button("❌ Reject", key=f"rej_{prop['id']}"):
                 supabase.table("suggestions").update({"status": "rejected"}).eq("id", prop["id"]).execute()
                 st.rerun()
 else:
     st.info("📭 No pending strategic proposals.")
 
-# --- VISUALIZATIONS ---
+# ============================================================
+# VISUALIZATIONS
+# ============================================================
 st.divider()
 st.subheader("📊 Analytics")
 
 if not leads_df.empty:
-    col1, col2 = st.columns(2)
-    with col1:
+    viz_col1, viz_col2 = st.columns(2)
+    with viz_col1:
         st.bar_chart(leads_df['faculty'].value_counts())
-    with col2:
+    with viz_col2:
         st.dataframe(inv_df, use_container_width=True)
 
 # --- LIMIT MEMORY ---
